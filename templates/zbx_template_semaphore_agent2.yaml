@@ -1,0 +1,467 @@
+zabbix_export:
+  version: '7.4'
+  template_groups:
+    - uuid: '58dc19c61c164d0b9cba239538d8576e'
+      name: Templates/Applications
+  templates:
+    - uuid: 'dcc251064c634577a5b6627c2cd1f2d7'
+      template: 'Semaphore by Zabbix agent 2'
+      name: 'Semaphore by Zabbix agent 2'
+      description: |
+        Мониторинг Ansible Semaphore (развёрнут в Docker, БД PostgreSQL).
+        Данные собираются скриптом /etc/zabbix/script/semaphore_monitor.py
+        через UserParameter Zabbix Agent 2 и REST API Semaphore.
+        Состояние контейнеров — встроенный плагин Docker Agent 2
+        (совместим с Podman: Plugins.Docker.Endpoint=unix:///run/podman/podman.sock).
+        Совместимость: Zabbix 7.4.x, Semaphore 2.8+, ansible-core 2.13.
+      vendor:
+        name: internal
+        version: 7.4-1
+      groups:
+        - name: Templates/Applications
+      items:
+        - uuid: '0f5f9eb4e0564236a445702838f6ecc6'
+          name: 'Semaphore: API ping'
+          key: semaphore.ping
+          delay: 1m
+          history: 7d
+          description: '1 — эндпоинт /api/ping отвечает, 0 — API недоступен.'
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: api
+          triggers:
+            - uuid: 'd51209096ce64c9c85decdd08ab1d173'
+              expression: 'last(/Semaphore by Zabbix agent 2/semaphore.ping)=0'
+              name: 'Semaphore: API недоступен'
+              priority: HIGH
+              manual_close: 'YES'
+              description: 'Эндпоинт /api/ping не отвечает. Проверьте контейнер Semaphore и сеть.'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: availability
+        - uuid: 'd60315151f1045f0af6f15cedd4faeb2'
+          name: 'Semaphore: сводные данные по задачам (raw JSON)'
+          key: semaphore.status
+          delay: 1m
+          history: 1d
+          trends: '0'
+          value_type: TEXT
+          timeout: 30s
+          description: 'Master item: JSON от semaphore_monitor.py status. Все метрики задач — dependent items.'
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: tasks
+          triggers:
+            - uuid: 'a72b06f3b00944b2aad9f7e85707ab1f'
+              expression: 'nodata(/Semaphore by Zabbix agent 2/semaphore.status,30m)=1'
+              name: 'Semaphore: нет данных мониторинга более 30 минут'
+              priority: WARNING
+              manual_close: 'YES'
+              description: 'Агент не возвращает данные. Проверьте Zabbix Agent 2, UserParameter и скрипт.'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: availability
+        - uuid: '5288c287889e406a8157d5f11e7eaf59'
+          name: 'Semaphore: опрос API успешен'
+          type: DEPENDENT
+          key: semaphore.api.reachable
+          history: 7d
+          description: '0 — /api/ping может отвечать, но опрос проектов/задач не удался (проверьте API-токен).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.api_reachable
+          master_item:
+            key: semaphore.status
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: api
+          triggers:
+            - uuid: 'f7066594ff0e42adbc989058e3b4e37f'
+              expression: 'last(/Semaphore by Zabbix agent 2/semaphore.api.reachable)=0'
+              name: 'Semaphore: ошибка опроса API (проверьте токен)'
+              priority: AVERAGE
+              manual_close: 'YES'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: availability
+        - uuid: '04f07708be644568ad0b0ac883c82966'
+          name: 'Semaphore: задач выполняется сейчас'
+          type: DEPENDENT
+          key: semaphore.tasks.running
+          history: 7d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.running
+          master_item:
+            key: semaphore.status
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: tasks
+        - uuid: 'b38fd844bbe84cafbfda656461a3e079'
+          name: 'Semaphore: шаблонов с ошибкой в последнем запуске'
+          type: DEPENDENT
+          key: semaphore.tasks.errors_last
+          history: 7d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.errors_last
+          master_item:
+            key: semaphore.status
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: tasks
+        - uuid: '4fc03513363748499a0d0b5e6ef25ef3'
+          name: 'Semaphore: всего шаблонов задач'
+          type: DEPENDENT
+          key: semaphore.templates.total
+          history: 7d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.templates
+          master_item:
+            key: semaphore.status
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: tasks
+        - uuid: '0c9c79064a224fbb89286105c524da06'
+          name: 'Docker: инфо контейнера Semaphore (raw)'
+          key: 'docker.container_info["{$SEMAPHORE.CONTAINER.APP}",full]'
+          delay: 1m
+          history: 1d
+          trends: '0'
+          value_type: TEXT
+          description: 'Встроенный плагин Docker Agent 2 (совместим с Podman через docker-совместимый API-сокет). Нужен доступ пользователя zabbix к сокету рантайма.'
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: docker
+        - uuid: '648c6c044c8245cd92e09c7c3c0b4ab9'
+          name: 'Docker: контейнер Semaphore запущен'
+          type: DEPENDENT
+          key: semaphore.container.app.running
+          history: 7d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.State.Running
+            - type: BOOL_TO_DECIMAL
+              parameters:
+                - ''
+          master_item:
+            key: 'docker.container_info["{$SEMAPHORE.CONTAINER.APP}",full]'
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: docker
+          triggers:
+            - uuid: '457df5008a544e168467f369706480de'
+              expression: 'last(/Semaphore by Zabbix agent 2/semaphore.container.app.running)=0'
+              name: 'Semaphore: контейнер приложения не запущен'
+              priority: HIGH
+              manual_close: 'YES'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: availability
+        - uuid: '7976fdccc3a54bfc98c0af97fa363c98'
+          name: 'Docker: инфо контейнера PostgreSQL (raw)'
+          key: 'docker.container_info["{$SEMAPHORE.CONTAINER.DB}",full]'
+          delay: 1m
+          history: 1d
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: db
+        - uuid: '7ec6f50c6cd44b38bbbcabc5f9336ae2'
+          name: 'Docker: контейнер PostgreSQL запущен'
+          type: DEPENDENT
+          key: semaphore.container.db.running
+          history: 7d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.State.Running
+            - type: BOOL_TO_DECIMAL
+              parameters:
+                - ''
+          master_item:
+            key: 'docker.container_info["{$SEMAPHORE.CONTAINER.DB}",full]'
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: db
+          triggers:
+            - uuid: 'fb4a273c4cd540e7ba4fd539eef74ecc'
+              expression: 'last(/Semaphore by Zabbix agent 2/semaphore.container.db.running)=0'
+              name: 'Semaphore: контейнер PostgreSQL не запущен'
+              priority: HIGH
+              manual_close: 'YES'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: availability
+        - uuid: '6bdbdabd3dc848b2a39e7a9e1a4c927c'
+          name: 'PostgreSQL: TCP-порт доступен'
+          key: 'net.tcp.port["{$SEMAPHORE.PG.HOST}","{$SEMAPHORE.PG.PORT}"]'
+          delay: 1m
+          history: 7d
+          status: DISABLED
+          description: 'ВЫКЛЮЧЕН по умолчанию: в типовой установке порт PostgreSQL не публикуется из контейнера, и проверка даёт ложный триггер. Включите итем, только если порт опубликован (ports: в compose). Состояние БД и без него контролируется проверкой контейнера.'
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: db
+          triggers:
+            - uuid: '3122f5560f8541fca381032465b902d2'
+              expression: 'last(/Semaphore by Zabbix agent 2/net.tcp.port["{$SEMAPHORE.PG.HOST}","{$SEMAPHORE.PG.PORT}"])=0'
+              name: 'Semaphore: порт PostgreSQL недоступен'
+              priority: AVERAGE
+              manual_close: 'YES'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: 'c445823fc5e143fbb45494ebfd6d02e9'
+          name: 'Semaphore: обнаружение шаблонов задач'
+          key: semaphore.discovery
+          delay: 1h
+          timeout: 30s
+          lifetime: 7d
+          description: 'LLD пар проект/шаблон из API Semaphore.'
+          item_prototypes:
+            - uuid: 'e9d44ebd60d84b0db9ad6f20907b8fb9'
+              name: 'Semaphore [{#PROJECT_NAME}/{#TEMPLATE_NAME}]: статус последнего запуска'
+              type: DEPENDENT
+              key: 'semaphore.task.status[{#PROJECT_ID},{#TEMPLATE_ID}]'
+              history: 30d
+              description: '0-success, 1-running, 2-waiting, 3-error, 4-stopped, 5-нет данных.'
+              valuemap:
+                name: 'Semaphore task status'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.tasks[?(@.project_id == {#PROJECT_ID} && @.template_id == {#TEMPLATE_ID})].status_code.first()'
+              master_item:
+                key: semaphore.status
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: tasks
+                - tag: project
+                  value: '{#PROJECT_NAME}'
+            - uuid: '4c7704441219457b913f0f4a3f9c1840'
+              name: 'Semaphore [{#PROJECT_NAME}/{#TEMPLATE_NAME}]: длительность последнего запуска'
+              type: DEPENDENT
+              key: 'semaphore.task.duration[{#PROJECT_ID},{#TEMPLATE_ID}]'
+              history: 30d
+              value_type: FLOAT
+              units: s
+              description: 'Для выполняющейся задачи — время с момента старта.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.tasks[?(@.project_id == {#PROJECT_ID} && @.template_id == {#TEMPLATE_ID})].duration_sec.first()'
+              master_item:
+                key: semaphore.status
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: tasks
+                - tag: project
+                  value: '{#PROJECT_NAME}'
+            - uuid: '39cf2915214f49f391cfc39b5fed5a68'
+              name: 'Semaphore [{#PROJECT_NAME}/{#TEMPLATE_NAME}]: время с последнего запуска'
+              type: DEPENDENT
+              key: 'semaphore.task.age[{#PROJECT_ID},{#TEMPLATE_ID}]'
+              history: 30d
+              value_type: FLOAT
+              units: s
+              description: '-1 — запусков не было.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.tasks[?(@.project_id == {#PROJECT_ID} && @.template_id == {#TEMPLATE_ID})].age_sec.first()'
+              master_item:
+                key: semaphore.status
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: tasks
+                - tag: project
+                  value: '{#PROJECT_NAME}'
+            - uuid: '27b77f1d7b834810b595b3809550096b'
+              name: 'Semaphore [{#PROJECT_NAME}/{#TEMPLATE_NAME}]: failed-хостов в последнем запуске'
+              type: DEPENDENT
+              key: 'semaphore.task.failed[{#PROJECT_ID},{#TEMPLATE_ID}]'
+              history: 30d
+              value_type: FLOAT
+              description: 'Из PLAY RECAP (ansible-core 2.13). -1 — recap не найден в выводе.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.tasks[?(@.project_id == {#PROJECT_ID} && @.template_id == {#TEMPLATE_ID})].hosts_failed.first()'
+              master_item:
+                key: semaphore.status
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: tasks
+                - tag: project
+                  value: '{#PROJECT_NAME}'
+            - uuid: 'd39d290c451d499ab5b68e47a0e76e19'
+              name: 'Semaphore [{#PROJECT_NAME}/{#TEMPLATE_NAME}]: unreachable-хостов в последнем запуске'
+              type: DEPENDENT
+              key: 'semaphore.task.unreachable[{#PROJECT_ID},{#TEMPLATE_ID}]'
+              history: 30d
+              value_type: FLOAT
+              description: 'Из PLAY RECAP (ansible-core 2.13). -1 — recap не найден в выводе.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.tasks[?(@.project_id == {#PROJECT_ID} && @.template_id == {#TEMPLATE_ID})].hosts_unreachable.first()'
+              master_item:
+                key: semaphore.status
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: tasks
+                - tag: project
+                  value: '{#PROJECT_NAME}'
+          trigger_prototypes:
+            - uuid: '1eec22402e9f4e54b23f7cc3610823c9'
+              expression: 'last(/Semaphore by Zabbix agent 2/semaphore.task.status[{#PROJECT_ID},{#TEMPLATE_ID}])=3'
+              name: 'Semaphore: задача "{#TEMPLATE_NAME}" ({#PROJECT_NAME}) завершилась с ошибкой'
+              priority: AVERAGE
+              manual_close: 'YES'
+              description: 'Последний запуск шаблона завершился со статусом error.'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: tasks
+            - uuid: '29c3a46ec5fc477aae225558c5244236'
+              expression: 'last(/Semaphore by Zabbix agent 2/semaphore.task.failed[{#PROJECT_ID},{#TEMPLATE_ID}])>0 or last(/Semaphore by Zabbix agent 2/semaphore.task.unreachable[{#PROJECT_ID},{#TEMPLATE_ID}])>0'
+              name: 'Semaphore: в "{#TEMPLATE_NAME}" ({#PROJECT_NAME}) есть failed/unreachable хосты'
+              opdata: 'failed: {ITEM.LASTVALUE1}, unreachable: {ITEM.LASTVALUE2}'
+              priority: WARNING
+              manual_close: 'YES'
+              description: 'По PLAY RECAP последнего запуска (ansible-core 2.13) есть хосты с ошибками или недоступные.'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: tasks
+            - uuid: '24d2d67d31b04f7e8a1f6fbc524c3d2c'
+              expression: 'last(/Semaphore by Zabbix agent 2/semaphore.task.status[{#PROJECT_ID},{#TEMPLATE_ID}])=1 and last(/Semaphore by Zabbix agent 2/semaphore.task.duration[{#PROJECT_ID},{#TEMPLATE_ID}])>{$SEMAPHORE.TASK.MAXTIME}'
+              name: 'Semaphore: задача "{#TEMPLATE_NAME}" ({#PROJECT_NAME}) выполняется дольше {$SEMAPHORE.TASK.MAXTIME} сек'
+              opdata: 'длительность: {ITEM.LASTVALUE2}'
+              priority: WARNING
+              manual_close: 'YES'
+              description: 'Возможное зависание задачи. Порог настраивается макросом {$SEMAPHORE.TASK.MAXTIME}.'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: tasks
+      macros:
+        - macro: '{$SEMAPHORE.CONTAINER.APP}'
+          value: semaphore
+          description: 'Имя Docker-контейнера Semaphore'
+        - macro: '{$SEMAPHORE.CONTAINER.DB}'
+          value: postgres
+          description: 'Имя Docker-контейнера PostgreSQL'
+        - macro: '{$SEMAPHORE.PG.HOST}'
+          value: 127.0.0.1
+          description: 'Адрес PostgreSQL для проверки порта с хоста'
+        - macro: '{$SEMAPHORE.PG.PORT}'
+          value: '5432'
+          description: 'Опубликованный порт PostgreSQL'
+        - macro: '{$SEMAPHORE.TASK.MAXTIME}'
+          value: '3600'
+          description: 'Порог длительности выполняющейся задачи, сек'
+      valuemaps:
+        - uuid: '45227f5aaaef4004860d8fe19cc9f329'
+          name: 'Semaphore task status'
+          mappings:
+            - value: '0'
+              newvalue: success
+            - value: '1'
+              newvalue: running
+            - value: '2'
+              newvalue: waiting
+            - value: '3'
+              newvalue: error
+            - value: '4'
+              newvalue: stopped
+            - value: '5'
+              newvalue: 'no data'
+      dashboards:
+        - uuid: 'ac8abbfaa72142bb92f9bf9fa6547ac9'
+          name: 'Semaphore: обзор'
+          pages:
+            - name: 'Обзор'
+              widgets:
+                - type: problems
+                  name: 'Проблемы Semaphore'
+                  width: '42'
+                  height: '6'
+                - type: item
+                  name: 'Задач выполняется'
+                  x: '42'
+                  width: '15'
+                  height: '6'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Semaphore by Zabbix agent 2'
+                        key: semaphore.tasks.running
+                - type: item
+                  name: 'Шаблонов с ошибкой'
+                  x: '57'
+                  width: '15'
+                  height: '6'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Semaphore by Zabbix agent 2'
+                        key: semaphore.tasks.errors_last

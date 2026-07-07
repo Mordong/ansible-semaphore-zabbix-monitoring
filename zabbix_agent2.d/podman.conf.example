@@ -1,0 +1,8 @@
+# Для хостов с Podman вместо Docker: плагин Docker в Zabbix Agent 2
+# работает с docker-совместимым API-сокетом Podman.
+# Разместить как podman.conf в каталоге, подключённом директивой Include
+# (в типовой пакетной поставке — /etc/zabbix/zabbix_agent2.d/plugins.d/).
+# Предварительно: systemctl enable --now podman.socket
+# и доступ пользователя zabbix к сокету (SocketMode=0660, SocketGroup=zabbix
+# через systemctl edit podman.socket).
+Plugins.Docker.Endpoint=unix:///run/podman/podman.sock

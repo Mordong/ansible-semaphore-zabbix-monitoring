@@ -1,0 +1,127 @@
+---
+# Развёртывание мониторинга Semaphore на хост с Zabbix Agent 2.
+#
+# Совместимость: ansible-core 2.13 — используются только модули
+# ansible.builtin (copy, template, file, systemd), FQCN, без конструкций,
+# появившихся в более поздних версиях.
+#
+# Запуск:
+#   ansible-playbook -i <inventory> deploy/deploy_monitoring.yml \
+#     -e semaphore_api_token='ТОКЕН'
+# Токен рекомендуется хранить в Ansible Vault.
+
+- name: Развернуть мониторинг Semaphore для Zabbix Agent 2
+  hosts: semaphore_hosts
+  become: true
+
+  vars:
+    semaphore_url: "http://127.0.0.1:3000"
+    semaphore_api_token: "CHANGE_ME"
+    semaphore_verify_tls: true
+    semaphore_fetch_output: true
+    # Каталог скриптов агента (стандарт окружения)
+    zbx_script_dir: /etc/zabbix/script
+    # Каталог, подключённый директивой Include в zabbix_agent2.conf
+    zbx_include_dir: /etc/zabbix/zabbix_agent2.d/plugins.d
+    # Контейнерный рантайм: docker | podman | none
+    container_runtime: podman
+
+  tasks:
+    - name: Каталог для скриптов агента
+      ansible.builtin.file:
+        path: "{{ zbx_script_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Скрипт мониторинга Semaphore
+      ansible.builtin.copy:
+        src: ../scripts/semaphore_monitor.py
+        dest: "{{ zbx_script_dir }}/semaphore_monitor.py"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Конфигурация скрипта (с API-токеном)
+      ansible.builtin.template:
+        src: templates/semaphore_monitor.conf.j2
+        dest: /etc/zabbix/semaphore_monitor.conf
+        owner: zabbix
+        group: zabbix
+        mode: "0600"
+      no_log: true
+
+    - name: UserParameter для Zabbix Agent 2
+      ansible.builtin.copy:
+        src: ../zabbix_agent2.d/userparameter_semaphore.conf
+        dest: "{{ zbx_include_dir }}/userparameter_semaphore.conf"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Перезапустить zabbix-agent2
+
+    - name: Эндпоинт плагина Docker для Podman
+      ansible.builtin.copy:
+        content: |
+          Plugins.Docker.Endpoint=unix:///run/podman/podman.sock
+        dest: "{{ zbx_include_dir }}/podman.conf"
+        owner: root
+        group: root
+        mode: "0644"
+      when: container_runtime == 'podman'
+      notify: Перезапустить zabbix-agent2
+
+    - name: Создать каталог drop-in podman.socket
+      ansible.builtin.file:
+        path: /etc/systemd/system/podman.socket.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: container_runtime == 'podman'
+
+    - name: Drop-in podman.socket (доступ группы zabbix к сокету)
+      ansible.builtin.copy:
+        content: |
+          [Socket]
+          SocketMode=0660
+          SocketGroup=zabbix
+          # connect() к сокету требует прохода по каталогу /run/podman,
+          # который systemd создаёт как root:root — выдаём группе доступ
+          ExecStartPost=/usr/bin/chgrp zabbix /run/podman
+          ExecStartPost=/usr/bin/chmod 0750 /run/podman
+        dest: /etc/systemd/system/podman.socket.d/zabbix-access.conf
+        owner: root
+        group: root
+        mode: "0644"
+      when: container_runtime == 'podman'
+      notify: Перезапустить podman.socket
+
+    - name: Включить podman.socket
+      ansible.builtin.systemd:
+        name: podman.socket
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: container_runtime == 'podman'
+
+    - name: Пользователь zabbix в группе docker
+      ansible.builtin.user:
+        name: zabbix
+        groups: docker
+        append: true
+      when: container_runtime == 'docker'
+      notify: Перезапустить zabbix-agent2
+
+  handlers:
+    - name: Перезапустить podman.socket
+      ansible.builtin.systemd:
+        name: podman.socket
+        state: restarted
+        daemon_reload: true
+
+    - name: Перезапустить zabbix-agent2
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+        state: restarted

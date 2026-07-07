@@ -1,0 +1,9 @@
+{
+  "url": "{{ semaphore_url }}",
+  "token": "{{ semaphore_api_token }}",
+  "timeout": 10,
+  "verify_tls": {{ semaphore_verify_tls | to_json }},
+  "fetch_output": {{ semaphore_fetch_output | to_json }},
+  "max_output_fetch": 50,
+  "cache_file": "/var/tmp/zbx_semaphore_recap_cache.json"
+}

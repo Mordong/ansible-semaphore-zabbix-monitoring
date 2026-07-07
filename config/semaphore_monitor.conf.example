@@ -1,0 +1,9 @@
+{
+  "url": "http://127.0.0.1:3000",
+  "token": "ЗАМЕНИТЕ_НА_API_ТОКЕН",
+  "timeout": 10,
+  "verify_tls": true,
+  "fetch_output": true,
+  "max_output_fetch": 50,
+  "cache_file": "/var/tmp/zbx_semaphore_recap_cache.json"
+}

@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.idea/
+.vscode/
+*.swp
+
+# реальные конфиги с токенами — только *.example в репозитории
+config/semaphore_monitor.conf
+deploy/inventory*
+!deploy/inventory.example
+
+# артефакты тестов
+tests/*.cache.json
+/tmp_*
