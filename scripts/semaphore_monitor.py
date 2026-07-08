@@ -7,6 +7,7 @@ semaphore_monitor.py — мониторинг Ansible Semaphore для Zabbix Ag
   ping       -> "1"/"0": доступность API Semaphore (GET /api/ping, без авторизации)
   discovery  -> LLD JSON для Zabbix: список пар проект/шаблон
   status     -> сводный JSON по последним задачам всех шаблонов (master item)
+  runners    -> статус remote-раннеров: активность, heartbeat (нужен admin-токен)
 
 Совместимость (проверено против форматов):
   * Semaphore v2.8+ (REST API v2, авторизация Bearer-токеном)
@@ -216,6 +217,39 @@ def mode_ping(cfg):
         return "0"
 
 
+def mode_runners(cfg):
+    """Статус раннеров Semaphore (remote runners): активность и heartbeat.
+    Эндпоинт /api/runners требует токен администратора."""
+    now = int(time.time())
+    try:
+        runners = api_get(cfg, "/api/runners")
+    except Exception as exc:
+        return {"api_reachable": 0, "error": str(exc)[:300],
+                "summary": {"total": 0, "active": 0}, "runners": []}
+    out = []
+    active_n = 0
+    for r in runners or []:
+        rid = r.get("id")
+        if rid is None:
+            continue
+        acode = 1 if r.get("active") else 0
+        active_n += acode
+        hb = None
+        for field in ("touched", "last_touched", "updated", "created"):
+            hb = parse_ts(r.get(field))
+            if hb:
+                break
+        out.append({
+            "id": rid,
+            "name": r.get("name") or ("runner-%s" % rid),
+            "active_code": acode,
+            "heartbeat_age_sec": max(0, now - hb) if hb else -1,
+        })
+    return {"api_reachable": 1, "error": "",
+            "summary": {"total": len(out), "active": active_n},
+            "runners": out}
+
+
 def collect(cfg):
     """Проекты -> шаблоны -> последняя задача по каждому шаблону."""
     projects = api_get(cfg, "/api/projects")
@@ -353,8 +387,9 @@ def mode_status(cfg):
 # -------------------------------------------------------------------- main --
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ("ping", "discovery", "status"):
-        sys.stderr.write("usage: semaphore_monitor.py ping|discovery|status\n")
+    modes = ("ping", "discovery", "status", "runners")
+    if len(sys.argv) != 2 or sys.argv[1] not in modes:
+        sys.stderr.write("usage: semaphore_monitor.py %s\n" % "|".join(modes))
         sys.exit(1)
     mode = sys.argv[1]
     cfg = load_config()
@@ -368,6 +403,10 @@ def main():
             print("[]")
             return
         die("token is not set in " + CONFIG_PATH)
+
+    if mode == "runners":
+        print(json.dumps(mode_runners(cfg)))
+        return
 
     if mode == "discovery":
         try:

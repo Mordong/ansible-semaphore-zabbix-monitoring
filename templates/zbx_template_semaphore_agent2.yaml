@@ -253,6 +253,81 @@ zabbix_export:
                   value: ansible-semaphore
                 - tag: scope
                   value: availability
+        - uuid: '91943fbb59264864b255bb24f19630be'
+          name: 'Semaphore: статус раннеров (raw JSON)'
+          key: semaphore.runners
+          delay: 1m
+          history: 1d
+          trends: '0'
+          value_type: TEXT
+          timeout: 30s
+          description: 'Master item: JSON от semaphore_monitor.py runners (эндпоинт /api/runners, нужен admin-токен).'
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: runner
+        - uuid: 'b4c160d03cba461aab2525c62ed03054'
+          name: 'Semaphore: опрос /api/runners успешен'
+          type: DEPENDENT
+          key: semaphore.runners.reachable
+          history: 7d
+          description: '0 — эндпоинт /api/runners недоступен (нужен admin-токен, remote runners должны быть включены).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.api_reachable
+          master_item:
+            key: semaphore.runners
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: runner
+          triggers:
+            - uuid: '93194dc190eb48c496063738e2ba765a'
+              expression: 'last(/Semaphore by Zabbix agent 2/semaphore.runners.reachable)=0'
+              name: 'Semaphore: не удаётся опросить /api/runners'
+              priority: AVERAGE
+              manual_close: 'YES'
+              description: 'Проверьте, что токен принадлежит администратору и режим remote runners включён.'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: availability
+        - uuid: 'f13549d21dcd452b9418e996d70a962a'
+          name: 'Semaphore: раннеров зарегистрировано'
+          type: DEPENDENT
+          key: semaphore.runners.total
+          history: 7d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.total
+          master_item:
+            key: semaphore.runners
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: runner
+        - uuid: '7739d9610dab421eb21bbddef78d66ee'
+          name: 'Semaphore: раннеров активно'
+          type: DEPENDENT
+          key: semaphore.runners.active
+          history: 7d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.active
+          master_item:
+            key: semaphore.runners
+          tags:
+            - tag: application
+              value: ansible-semaphore
+            - tag: component
+              value: runner
       discovery_rules:
         - uuid: 'c445823fc5e143fbb45494ebfd6d02e9'
           name: 'Semaphore: обнаружение шаблонов задач'
@@ -401,7 +476,231 @@ zabbix_export:
                   value: ansible-semaphore
                 - tag: scope
                   value: tasks
+        - uuid: '87e52453294447c1895f282c3399edae'
+          name: 'Semaphore: обнаружение раннеров (API)'
+          type: DEPENDENT
+          key: semaphore.runners.discovery
+          lifetime: 7d
+          description: 'Раннеры из /api/runners. LLD зависит от master-итема semaphore.runners.'
+          master_item:
+            key: semaphore.runners
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.runners
+          lld_macro_paths:
+            - lld_macro: '{#RUNNER_ID}'
+              path: $.id
+            - lld_macro: '{#RUNNER_NAME}'
+              path: $.name
+          item_prototypes:
+            - uuid: '218492e14c874fba9910a101fb9e3e9a'
+              name: 'Semaphore раннер {#RUNNER_NAME}: активен (API)'
+              type: DEPENDENT
+              key: 'semaphore.runner.active[{#RUNNER_ID}]'
+              history: 30d
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.runners[?(@.id == {#RUNNER_ID})].active_code.first()'
+              master_item:
+                key: semaphore.runners
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: runner
+            - uuid: '7380848032f54657a946a770caa2ac58'
+              name: 'Semaphore раннер {#RUNNER_NAME}: возраст heartbeat'
+              type: DEPENDENT
+              key: 'semaphore.runner.heartbeat.age[{#RUNNER_ID}]'
+              history: 30d
+              value_type: FLOAT
+              units: s
+              description: '-1 — время последнего касания недоступно в API.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.runners[?(@.id == {#RUNNER_ID})].heartbeat_age_sec.first()'
+              master_item:
+                key: semaphore.runners
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: runner
+          trigger_prototypes:
+            - uuid: 'fa2ac45135f64a85bf936422e6dedf75'
+              expression: 'last(/Semaphore by Zabbix agent 2/semaphore.runner.active[{#RUNNER_ID}])=0'
+              name: 'Semaphore: раннер "{#RUNNER_NAME}" неактивен'
+              priority: AVERAGE
+              manual_close: 'YES'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: runner
+            - uuid: '94907b004ee54117b94d6105c5186f00'
+              expression: 'last(/Semaphore by Zabbix agent 2/semaphore.runner.heartbeat.age[{#RUNNER_ID}])>{$SEMAPHORE.RUNNER.HEARTBEAT.MAX}'
+              name: 'Semaphore: нет heartbeat раннера "{#RUNNER_NAME}" дольше {$SEMAPHORE.RUNNER.HEARTBEAT.MAX} сек'
+              opdata: 'возраст heartbeat: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              manual_close: 'YES'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: runner
+        - uuid: '1acb8964c6374fc791903cd49e9d64fa'
+          name: 'Semaphore: обнаружение контейнеров раннеров'
+          key: 'docker.containers.discovery[true]'
+          delay: 5m
+          lifetime: 7d
+          description: 'Все контейнеры (включая остановленные) с фильтром имени по {$SEMAPHORE.RUNNER.MATCHES}. Остановленные включены намеренно: упавший раннер должен давать триггер, а не исчезать из обнаружения.'
+          filter:
+            conditions:
+              - macro: '{#NAME}'
+                value: '{$SEMAPHORE.RUNNER.MATCHES}'
+                formulaid: A
+          item_prototypes:
+            - uuid: '2adf313281354a2084d5e83be7753523'
+              name: 'Раннер {#NAME}: инфо контейнера (raw)'
+              key: 'docker.container_info["{#NAME}",full]'
+              delay: 1m
+              history: 1d
+              trends: '0'
+              value_type: TEXT
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: runner
+            - uuid: '6c94c523d8074b258d49ba739abc4746'
+              name: 'Раннер {#NAME}: контейнер запущен'
+              type: DEPENDENT
+              key: 'semaphore.runner.container.running["{#NAME}"]'
+              history: 30d
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.State.Running
+                - type: BOOL_TO_DECIMAL
+                  parameters:
+                    - ''
+              master_item:
+                key: 'docker.container_info["{#NAME}",full]'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: runner
+            - uuid: 'd539c811b2d94b0d9197d2e341e8802f'
+              name: 'Раннер {#NAME}: код завершения'
+              type: DEPENDENT
+              key: 'semaphore.runner.container.exitcode["{#NAME}"]'
+              history: 30d
+              value_type: FLOAT
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.State.ExitCode
+              master_item:
+                key: 'docker.container_info["{#NAME}",full]'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: runner
+            - uuid: '59e031d994374c56bde92c60da322021'
+              name: 'Раннер {#NAME}: число рестартов'
+              type: DEPENDENT
+              key: 'semaphore.runner.container.restarts["{#NAME}"]'
+              history: 30d
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.RestartCount
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              master_item:
+                key: 'docker.container_info["{#NAME}",full]'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: runner
+            - uuid: 'cba768f78f97426183654f645381f77d'
+              name: 'Раннер {#NAME}: статистика контейнера (raw)'
+              key: 'docker.container_stats["{#NAME}"]'
+              delay: 1m
+              history: 1d
+              trends: '0'
+              value_type: TEXT
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: runner
+            - uuid: 'e482126ce4ab48dfa00066ee545eda99'
+              name: 'Раннер {#NAME}: CPU, ядер'
+              type: DEPENDENT
+              key: 'semaphore.runner.container.cpu["{#NAME}"]'
+              history: 30d
+              value_type: FLOAT
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.cpu_stats.cpu_usage.total_usage
+                - type: CHANGE_PER_SECOND
+                  parameters:
+                    - ''
+                - type: MULTIPLIER
+                  parameters:
+                    - '0.000000001'
+              master_item:
+                key: 'docker.container_stats["{#NAME}"]'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: runner
+            - uuid: '3300e98fbada46cbb66dc3f1a5c9d0ea'
+              name: 'Раннер {#NAME}: память, байт'
+              type: DEPENDENT
+              key: 'semaphore.runner.container.mem["{#NAME}"]'
+              history: 30d
+              value_type: FLOAT
+              units: B
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.memory_stats.usage
+              master_item:
+                key: 'docker.container_stats["{#NAME}"]'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: component
+                  value: runner
+          trigger_prototypes:
+            - uuid: 'ac06bf0a0286491f9a3eb1834ca347b2'
+              expression: 'last(/Semaphore by Zabbix agent 2/semaphore.runner.container.running["{#NAME}"])=0'
+              name: 'Semaphore: контейнер раннера {#NAME} не запущен'
+              priority: HIGH
+              manual_close: 'YES'
+              tags:
+                - tag: application
+                  value: ansible-semaphore
+                - tag: scope
+                  value: runner
       macros:
+        - macro: '{$SEMAPHORE.RUNNER.MATCHES}'
+          value: '^/?podman_runner-.*'
+          description: 'Регэксп имён контейнеров раннеров для LLD'
+        - macro: '{$SEMAPHORE.RUNNER.HEARTBEAT.MAX}'
+          value: '300'
+          description: 'Порог возраста heartbeat раннера, сек'
         - macro: '{$SEMAPHORE.CONTAINER.APP}'
           value: semaphore
           description: 'Имя Docker-контейнера Semaphore'

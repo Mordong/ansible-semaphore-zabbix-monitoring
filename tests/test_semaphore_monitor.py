@@ -74,6 +74,12 @@ ROUTES = {
          "created": "2025-12-31T09:00:00Z",
          "start": "2025-12-31T09:00:01Z", "end": "2025-12-31T09:02:00Z"},
     ],
+    "/api/runners": [
+        {"id": 1, "name": "podman_runner-01", "active": True,
+         "touched": "2026-01-01T09:00:00Z"},
+        {"id": 2, "name": "podman_runner-02", "active": False,
+         "touched": "0001-01-01T00:00:00Z"},
+    ],
     "/api/project/1/tasks/101/output": [
         {"task_id": 101, "output": "PLAY RECAP ****"},
         {"task_id": 101, "output": "web1 : ok=4 changed=1 unreachable=0 "
@@ -169,6 +175,18 @@ def test_integration():
             st_bad = json.loads(run_script("status", bad))
             assert st_bad["api_reachable"] == 0
             assert run_script("discovery", bad) == "[]"
+
+            # режим runners: активность, heartbeat, деградация
+            rn = json.loads(run_script("runners", conf))
+            assert rn["api_reachable"] == 1
+            assert rn["summary"] == {"total": 2, "active": 1}
+            by_id = {r["id"]: r for r in rn["runners"]}
+            assert by_id[1]["active_code"] == 1
+            assert by_id[1]["heartbeat_age_sec"] >= 0
+            assert by_id[2]["active_code"] == 0
+            assert by_id[2]["heartbeat_age_sec"] == -1
+            rn_bad = json.loads(run_script("runners", bad))
+            assert rn_bad["api_reachable"] == 0 and rn_bad["runners"] == []
     finally:
         srv.shutdown()
 

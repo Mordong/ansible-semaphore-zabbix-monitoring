@@ -161,6 +161,8 @@ Data collection → Templates → Import → `templates/zbx_template_semaphore_a
 | `{$SEMAPHORE.CONTAINER.DB}` | `postgres` | имя контейнера PostgreSQL |
 | `{$SEMAPHORE.PG.HOST}` / `{$SEMAPHORE.PG.PORT}` | `127.0.0.1` / `5432` | адрес проверки порта БД с хоста |
 | `{$SEMAPHORE.TASK.MAXTIME}` | `3600` | порог «задача выполняется слишком долго», сек |
+| `{$SEMAPHORE.RUNNER.MATCHES}` | `^/?podman_runner-.*` | регэксп имён контейнеров раннеров для LLD |
+| `{$SEMAPHORE.RUNNER.HEARTBEAT.MAX}` | `300` | порог возраста heartbeat раннера, сек |
 
 Итем «PostgreSQL: TCP-порт доступен» по умолчанию ВЫКЛЮЧЕН: в типовой установке порт БД не публикуется из контейнера, и проверка давала бы ложный триггер. Включите его на хосте только при опубликованном порте; состояние БД и без него контролируется проверкой контейнера.
 
@@ -170,7 +172,28 @@ Data collection → Templates → Import → `templates/zbx_template_semaphore_a
 
 **Задачи (LLD по каждому шаблону Semaphore):** статус последнего запуска (success/running/waiting/error/stopped), длительность, время с последнего запуска, failed- и unreachable-хосты из PLAY RECAP. Триггеры: запуск завершился с ошибкой (AVERAGE); есть failed/unreachable хосты (WARNING); задача выполняется дольше порога (WARNING).
 
+**Раннеры (v1.1.0+):** два независимых контура. (1) Контейнеры раннеров — LLD `docker.containers.discovery[true]` с фильтром имени по макросу `{$SEMAPHORE.RUNNER.MATCHES}` (по умолчанию `^/?podman_runner-.*`); на каждый контейнер: running-состояние, exit code, рестарты, CPU (ядер) и память; триггер HIGH «контейнер раннера не запущен». Остановленные контейнеры включены в обнаружение намеренно — упавший раннер даёт триггер, а не исчезает из LLD. (2) Heartbeat из API — master-итем `semaphore.runners` (режим `runners` скрипта, эндпоинт `/api/runners`, требуется admin-токен), зависимое LLD по раннерам: активность и возраст heartbeat, триггеры «раннер неактивен» (AVERAGE) и «нет heartbeat дольше `{$SEMAPHORE.RUNNER.HEARTBEAT.MAX}` сек» (WARNING, по умолчанию 300). При недоступности `/api/runners` — отдельный триггер «не удаётся опросить /api/runners» без ложных сработок по самим раннерам.
+
 Дашборд «Semaphore: обзор» входит в шаблон (проблемы + счётчики). Если при импорте в вашей минорной версии возникнет ошибка на секции `dashboards` — удалите её из YAML, на остальное это не влияет.
+
+## Совместимость с Podman 4.9.x (проверено)
+
+Против compat-API Podman 4.9 подтверждено: ping на версии API 1.28 (её использует
+плагин Docker Agent 2); список контейнеров `/containers/json?all=true` отдаёт
+имена с ведущим слэшем (`/podman_runner-01`) — регэксп макроса
+`{$SEMAPHORE.RUNNER.MATCHES}` (`^/?podman_runner-.*`) это учитывает; в inspect
+присутствуют все поля, используемые шаблоном: `State.Running`, `State.ExitCode`,
+`RestartCount`. Пути статистики (`cpu_stats.cpu_usage.total_usage`,
+`memory_stats.usage`) совпадают с официальным шаблоном «Docker by Zabbix
+agent 2». Расчёт CPU намеренно построен на Change per second от счётчика
+`total_usage`, а не на `precpu_stats` — у Podman известен баг с нулевыми
+`precpu_stats` (containers/podman#24730), наш способ его не задевает.
+
+Особенность Podman: для ОСТАНОВЛЕННОГО контейнера эндпоинт `/stats` возвращает
+ошибку (Docker отдаёт нули), поэтому итем «статистика контейнера (raw)» у
+неработающего раннера уходит в unsupported — это ожидаемо и не влияет на
+триггер HIGH «контейнер раннера не запущен», который строится по inspect.
+После старта контейнера итем восстанавливается сам.
 
 ## Тестовая проверка триггеров (шаг 4 плана)
 
